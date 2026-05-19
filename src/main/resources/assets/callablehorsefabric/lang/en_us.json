@@ -3,10 +3,15 @@
 
   "key.setHorse.callablehorse": "Set Horse",
   "key.callHorse.callablehorse": "Call Horse",
+  "key.toggleScenicRide.callablehorse": "Toggle Scenic Ride",
 
   "no_horse_can_call.callablehorse.info": "You have no horse.",
   "success_call_house.callablehorse.info": "Success call your horse.",
   "horse_cannot_call.callablehorse.info": "Your horse is dead or not in range can call.",
   "no_horse_can_set.callablehorse.info": "No horse can set.",
-  "success_set_house.callablehorse.info": "Success set horse."
+  "success_set_house.callablehorse.info": "Success set horse.",
+  "no_horse_to_toggle_scenic.callablehorse.info": "You are not controlling a horse.",
+  "scenic_ride_on.callablehorse.info": "Scenic ride enabled.",
+  "scenic_ride_off.callablehorse.info": "Scenic ride disabled.",
+  "horse_in_another_dimension.callablehorse.info": "Your horse is in another dimension."
 }

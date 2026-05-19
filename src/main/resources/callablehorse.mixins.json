@@ -9,6 +9,10 @@
     "HorseInventoryMenuMixin",
     "PlayerListMixin"
   ],
+  "client": [
+    "HorseModelAccess",
+    "HorseRendererMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
 	}

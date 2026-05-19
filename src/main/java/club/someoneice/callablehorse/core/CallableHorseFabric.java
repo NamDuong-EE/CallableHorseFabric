@@ -40,6 +40,8 @@ import java.util.UUID;
 public class CallableHorseFabric implements ModInitializer {
     public static final String MODID = "callablehorsefabric";
     public static final Logger LOG = LogManager.getLogger(MODID);
+    public static final String PLAYER_HORSE_DIMENSION = "player_horse_dimension";
+    public static final String HORSE_DIMENSION = "callable_horse_dimension";
 
     public static int rangeCanCall = 0;
     public static boolean canRespawnHorse = true;
@@ -61,6 +63,7 @@ public class CallableHorseFabric implements ModInitializer {
     // C2S
     public static final ResourceLocation CALL_HORSE_PACKAGE = id("call_horse_key");
     public static final ResourceLocation SET_HORSE_PACKAGE = id("set_horse_key");
+    public static final ResourceLocation TOGGLE_SCENIC_RIDE_PACKAGE = id("toggle_scenic_ride_key");
    //  public static final ResourceLocation STATE_HORSE_PACKAGE = id("state_horse_key");
 
     public WorldHorseData data;
@@ -73,9 +76,11 @@ public class CallableHorseFabric implements ModInitializer {
 
         PayloadTypeRegistry.playC2S().register(CallHorsePayload.ID, CallHorsePayload.CODEC);
         PayloadTypeRegistry.playC2S().register(SetHorsePayload.ID, SetHorsePayload.CODEC);
+        PayloadTypeRegistry.playC2S().register(ToggleScenicRidePayload.ID, ToggleScenicRidePayload.CODEC);
 
         ServerPlayNetworking.registerGlobalReceiver(CallHorsePayload.ID, (payload, context) -> onCallHorse(context.server(), context.player()));
         ServerPlayNetworking.registerGlobalReceiver(SetHorsePayload.ID, (payload, context) -> onSetHorse(context.player()));
+        ServerPlayNetworking.registerGlobalReceiver(ToggleScenicRidePayload.ID, (payload, context) -> onToggleScenicRide(context.player()));
         // ServerPlayNetworking.registerGlobalReceiver(STATE_HORSE_PACKAGE, CallableHorseFabric::checkHorseState);
 
         Registry.register(BuiltInRegistries.SOUND_EVENT, whistle.getLocation(), whistle);
@@ -89,10 +94,10 @@ public class CallableHorseFabric implements ModInitializer {
             if (this.data.horseShouldKill.isEmpty()) return;
 
             for (var entity : world.getAllEntities()) {
-                if (!(entity instanceof AbstractHorse horse)) return;
+                if (!(entity instanceof AbstractHorse horse)) continue;
 
                 var nbt = horse.getCompoundTag();
-                if (!nbt.contains("player_horse_UUID")) return;
+                if (!nbt.contains("player_horse_UUID")) continue;
                 String uuid = nbt.getString("player_horse_UUID");
                 if (!this.data.horseShouldRespawn.contains(uuid) && this.data.horseShouldKill.contains(uuid)) horse.kill();
 
@@ -106,10 +111,10 @@ public class CallableHorseFabric implements ModInitializer {
             if (this.data.horseShouldKill.isEmpty()) return;
 
             for (var entity : world.getAllEntities()) {
-                if (!(entity instanceof AbstractHorse horse)) return;
+                if (!(entity instanceof AbstractHorse horse)) continue;
 
                 var nbt = horse.getCompoundTag();
-                if (!nbt.contains("player_horse_UUID")) return;
+                if (!nbt.contains("player_horse_UUID")) continue;
                 String uuid = nbt.getString("player_horse_UUID");
                 if (!this.data.horseShouldRespawn.contains(uuid) && this.data.horseShouldKill.contains(uuid)) horse.kill();
 
@@ -144,6 +149,17 @@ public class CallableHorseFabric implements ModInitializer {
         }
     }
 
+    public record ToggleScenicRidePayload() implements CustomPacketPayload {
+        public static final ToggleScenicRidePayload INSTANCE = new ToggleScenicRidePayload();
+        public static final Type<ToggleScenicRidePayload> ID = new Type<>(TOGGLE_SCENIC_RIDE_PACKAGE);
+        public static final StreamCodec<RegistryFriendlyByteBuf, ToggleScenicRidePayload> CODEC = StreamCodec.unit(INSTANCE);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return ID;
+        }
+    }
+
     private static void onCallHorse(MinecraftServer server, ServerPlayer player) {
         playWhistle(player);
 
@@ -170,23 +186,35 @@ public class CallableHorseFabric implements ModInitializer {
                 String uuidHorse = horse.getCompoundTag().getString("player_horse_UUID");
                 if (!uuid.equals(uuidHorse)) continue;
                 callHorse(horse, player);
+                return;
             }
+            player.displayClientMessage(Component.translatable("horse_cannot_call.callablehorse.info").withStyle(ChatFormatting.RED), true);
+            return;
         } else if (canCallFromOtherWorld) {
-            List<Entity> entities = Lists.newArrayList();
+            AbstractHorse loadedHorse = findLoadedHorse(server, uuid);
+            if (loadedHorse != null) {
+                if (loadedHorse.level().dimension() != player.level().dimension()) {
+                    player.displayClientMessage(Component.translatable("horse_in_another_dimension.callablehorse.info").withStyle(ChatFormatting.RED), true);
+                    saveHorseDimension(player, loadedHorse);
+                    return;
+                }
 
-            for (ServerLevel w : server.getAllLevels()) entities.addAll(ImmutableList.copyOf(w.getAllEntities()));
-            for (var entity : entities) {
-                if (!(entity instanceof AbstractHorse horse)) continue;
-                String uuidHorse = horse.getCompoundTag().getString("player_horse_UUID");
-                if (!uuid.equals(uuidHorse)) continue;
-                callHorse(horse, player);
+                callHorse(loadedHorse, player);
                 return;
             }
 
-            if (!callFromUnloadAndCallHorse(player))
-                player.displayClientMessage(Component.translatable("horse_cannot_call.callablehorse.info").withStyle(ChatFormatting.RED), true);
+            if (hasSavedHorseInAnotherDimension(player)) {
+                player.displayClientMessage(Component.translatable("horse_in_another_dimension.callablehorse.info").withStyle(ChatFormatting.RED), true);
+                return;
+            }
 
-            data.horseShouldKill.add(uuid);
+            if (callFromUnloadAndCallHorse(player)) {
+                data.horseShouldKill.add(uuid);
+                player.displayClientMessage(Component.translatable("success_call_house.callablehorse.info").withStyle(ChatFormatting.GREEN), true);
+            } else {
+                player.displayClientMessage(Component.translatable("horse_cannot_call.callablehorse.info").withStyle(ChatFormatting.RED), true);
+            }
+            return;
         } else {
             for (var entity : ((ServerLevel) player.level()).getAllEntities()) {
                 if (!(entity instanceof AbstractHorse horse)) continue;
@@ -196,13 +224,47 @@ public class CallableHorseFabric implements ModInitializer {
                 return;
             }
 
-            if (!callFromUnloadAndCallHorse(player))
-                player.displayClientMessage(Component.translatable("horse_cannot_call.callablehorse.info").withStyle(ChatFormatting.RED), true);
+            if (hasSavedHorseInAnotherDimension(player)) {
+                player.displayClientMessage(Component.translatable("horse_in_another_dimension.callablehorse.info").withStyle(ChatFormatting.RED), true);
+                return;
+            }
 
-            data.horseShouldKill.add(uuid);
+            if (callFromUnloadAndCallHorse(player)) {
+                data.horseShouldKill.add(uuid);
+                player.displayClientMessage(Component.translatable("success_call_house.callablehorse.info").withStyle(ChatFormatting.GREEN), true);
+            } else {
+                player.displayClientMessage(Component.translatable("horse_cannot_call.callablehorse.info").withStyle(ChatFormatting.RED), true);
+            }
+            return;
+        }
+    }
+
+    private static AbstractHorse findLoadedHorse(MinecraftServer server, String uuid) {
+        List<Entity> entities = Lists.newArrayList();
+        for (ServerLevel level : server.getAllLevels()) entities.addAll(ImmutableList.copyOf(level.getAllEntities()));
+
+        for (Entity entity : entities) {
+            if (!(entity instanceof AbstractHorse horse)) continue;
+            String uuidHorse = horse.getCompoundTag().getString("player_horse_UUID");
+            if (uuid.equals(uuidHorse)) return horse;
         }
 
-        player.displayClientMessage(Component.translatable("success_call_house.callablehorse.info").withStyle(ChatFormatting.GREEN), true);
+        return null;
+    }
+
+    public static void saveHorseDimension(ServerPlayer player, AbstractHorse horse) {
+        String dimension = horse.level().dimension().location().toString();
+        player.getCompoundTag().putString(PLAYER_HORSE_DIMENSION, dimension);
+        horse.getCompoundTag().putString(HORSE_DIMENSION, dimension);
+    }
+
+    private static boolean hasSavedHorseInAnotherDimension(ServerPlayer player) {
+        var nbt = player.getCompoundTag();
+        String playerDimension = player.level().dimension().location().toString();
+        if (nbt.contains(PLAYER_HORSE_DIMENSION)) return !playerDimension.equals(nbt.getString(PLAYER_HORSE_DIMENSION));
+
+        CompoundTag horseTag = nbt.getCompound("player_horse_nbt");
+        return horseTag.contains(HORSE_DIMENSION) && !playerDimension.equals(horseTag.getString(HORSE_DIMENSION));
     }
 
     private static void callHorse(AbstractHorse horse, ServerPlayer player) {
@@ -211,6 +273,7 @@ public class CallableHorseFabric implements ModInitializer {
         Vec3 start = findCallPosition(level, player, -CALL_START_DISTANCE);
         Vec3 target = findCallPosition(level, player, CALL_TARGET_DISTANCE);
         horse.teleportTo(level, start.x(), start.y(), start.z(), null, player.getYRot(), horse.getXRot());
+        saveHorseDimension(player, horse);
         startStraightRun(horse, target);
         player.displayClientMessage(Component.translatable("success_call_house.callablehorse.info").withStyle(ChatFormatting.GREEN), true);
     }
@@ -383,18 +446,23 @@ public class CallableHorseFabric implements ModInitializer {
 
     private static boolean respawnAndCallHorse(ServerPlayer player) {
         var nbt = player.getCompoundTag().getCompound("player_horse_nbt");
-        var deadHorse = EntityType.by(nbt).get().create(player.level());
+        var entityType = EntityType.by(nbt);
+        if (entityType.isEmpty()) return false;
+        var deadHorse = entityType.get().create(player.level());
         if (!(deadHorse instanceof AbstractHorse horse)) return false;
         horse.load(nbt);
         ((AbstractHorseAccess) horse).getInventory().clearContent();
         horse.getCompoundTag().putString("player_horse_UUID", player.getCompoundTag().getString("player_horse_UUID"));
+        saveHorseDimension(player, horse);
         spawnHorseBehindPlayer(horse, player);
         return true;
     }
 
     private static boolean callFromUnloadAndCallHorse(ServerPlayer player) {
         var nbt = player.getCompoundTag().getCompound("player_horse_nbt");
-        var deadHorse = EntityType.by(nbt).get().create(player.level());
+        var entityType = EntityType.by(nbt);
+        if (entityType.isEmpty()) return false;
+        var deadHorse = entityType.get().create(player.level());
         if (!(deadHorse instanceof AbstractHorse horse)) return false;
         horse.load(nbt);
         spawnHorseBehindPlayer(horse, player);
@@ -402,9 +470,11 @@ public class CallableHorseFabric implements ModInitializer {
         String uuid = UUID.randomUUID().toString();
         horse.getCompoundTag().putString("player_horse_UUID", uuid);
         player.getCompoundTag().putString("player_horse_UUID", uuid);
+        saveHorseDimension(player, horse);
 
         CompoundTag horseTag = new CompoundTag();
         horse.save(horseTag);
+        horseTag.putString(HORSE_DIMENSION, player.level().dimension().location().toString());
         player.getCompoundTag().put("player_horse_nbt", horseTag);
         player.getCompoundTag().putString("player_horse_type", horse.getType().toString());
 
@@ -421,12 +491,27 @@ public class CallableHorseFabric implements ModInitializer {
         String uuid = UUID.randomUUID().toString();
         horse.getCompoundTag().putString("player_horse_UUID", uuid);
         player.getCompoundTag().putString("player_horse_UUID", uuid);
+        saveHorseDimension(player, horse);
 
         CompoundTag horseTag = new CompoundTag();
         horse.save(horseTag);
+        horseTag.putString(HORSE_DIMENSION, player.level().dimension().location().toString());
         player.getCompoundTag().put("player_horse_nbt", horseTag);
         player.getCompoundTag().putString("player_horse_type", horse.getType().toString());
         player.displayClientMessage(Component.translatable("success_set_house.callablehorse.info").withStyle(ChatFormatting.GREEN), true);
+    }
+
+    private static void onToggleScenicRide(ServerPlayer player) {
+        var entity = player.getVehicle();
+        if (!(entity instanceof AbstractHorse horse) || horse.getControllingPassenger() != player) {
+            player.displayClientMessage(Component.translatable("no_horse_to_toggle_scenic.callablehorse.info").withStyle(ChatFormatting.RED), true);
+            return;
+        }
+
+        boolean enabled = HorseFeatures.toggleScenicRide(horse);
+        player.displayClientMessage(Component.translatable(enabled
+                ? "scenic_ride_on.callablehorse.info"
+                : "scenic_ride_off.callablehorse.info").withStyle(enabled ? ChatFormatting.GREEN : ChatFormatting.YELLOW), true);
     }
 
     /*

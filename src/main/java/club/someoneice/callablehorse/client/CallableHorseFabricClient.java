@@ -13,6 +13,7 @@ import org.lwjgl.glfw.GLFW;
 public class CallableHorseFabricClient implements ClientModInitializer {
     public KeyMapping SET_HORSE = KeyBindingHelper.registerKeyBinding(new KeyMapping(keyStringKey("setHorse"), InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_P, keyStringKey("key." + CallableHorseFabric.MODID)));
     public KeyMapping CALL_HORSE = KeyBindingHelper.registerKeyBinding(new KeyMapping(keyStringKey("callHorse"), InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_V, keyStringKey("key." + CallableHorseFabric.MODID)));
+    public KeyMapping TOGGLE_SCENIC_RIDE = KeyBindingHelper.registerKeyBinding(new KeyMapping(keyStringKey("toggleScenicRide"), InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_R, keyStringKey("key." + CallableHorseFabric.MODID)));
     // public KeyMapping CHECK_HORSE = KeyBindingHelper.registerKeyBinding(new KeyMapping(keyStringKey("checkHorse"), InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_K, keyStringKey("key." + CallableHorseFabric.MODID)));
 
     private String keyStringKey(String name) {
@@ -30,6 +31,7 @@ public class CallableHorseFabricClient implements ClientModInitializer {
                ClientPlayNetworking.send(CallableHorseFabric.CallHorsePayload.INSTANCE);
            }
            while (SET_HORSE.consumeClick()) ClientPlayNetworking.send(CallableHorseFabric.SetHorsePayload.INSTANCE);
+           while (TOGGLE_SCENIC_RIDE.consumeClick()) ClientPlayNetworking.send(CallableHorseFabric.ToggleScenicRidePayload.INSTANCE);
            // if (CHECK_HORSE.isDown())    ClientPlayNetworking.send(CallableHorseFabric.STATE_HORSE_PACKAGE, PacketByteBufs.empty());
         });
     }
