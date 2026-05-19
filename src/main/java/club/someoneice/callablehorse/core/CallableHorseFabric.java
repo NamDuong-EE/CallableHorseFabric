@@ -322,6 +322,7 @@ public class CallableHorseFabric implements ModInitializer {
         var followRange = horse.getAttribute(Attributes.FOLLOW_RANGE);
         if (followRange != null && followRange.getBaseValue() < 64.0D) followRange.setBaseValue(64.0D);
 
+        HorseFeatures.clearScenicRideSpeed(horse);
         horse.getNavigation().stop();
         horse.setNoAi(true);
 
@@ -442,6 +443,7 @@ public class CallableHorseFabric implements ModInitializer {
         horse.setNoAi(false);
         horse.getNavigation().stop();
         horse.setDeltaMovement(Vec3.ZERO);
+        HorseFeatures.applyScenicRideSpeed(horse);
     }
 
     private static boolean respawnAndCallHorse(ServerPlayer player) {

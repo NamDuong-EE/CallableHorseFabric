@@ -66,4 +66,9 @@ public final class HorseFeatures {
             ));
         }
     }
+
+    public static void clearScenicRideSpeed(AbstractHorse horse) {
+        var speed = horse.getAttribute(Attributes.MOVEMENT_SPEED);
+        if (speed != null) speed.removeModifier(SCENIC_SPEED_MODIFIER_ID);
+    }
 }
