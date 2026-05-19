@@ -22,7 +22,7 @@ public class HorseInfoGUI extends Screen {
     private int xSize = 176;
     private int ySize = 138;
 
-    private static final ResourceLocation TEXTURE = new ResourceLocation(CallableHorseFabric.MODID, "textures/gui/horse_stat_viewer.png");
+    private static final ResourceLocation TEXTURE = CallableHorseFabric.id("textures/gui/horse_stat_viewer.png");
     private final AbstractHorse horse;
 
     private final double speed;
@@ -43,7 +43,8 @@ public class HorseInfoGUI extends Screen {
         this.health = (Math.floor(horse.getHealth()));
         this.maxHealth = (Math.floor(horse.getMaxHealth() * 10) / 10);
         this.speed = (Math.floor(horse.getAttribute(Attributes.MOVEMENT_SPEED).getValue() * 100) / 10);
-        this.jumpHeight = (Math.floor(horse.getCustomJump() * 100) / 10);
+        var jumpStrength = horse.getAttribute(Attributes.JUMP_STRENGTH);
+        this.jumpHeight = jumpStrength == null ? 0.0 : (Math.floor(jumpStrength.getValue() * 100) / 10);
         this.lastPos = horse.position();
         this.lastDim = horse.level().dimension();
     }
@@ -51,7 +52,7 @@ public class HorseInfoGUI extends Screen {
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTicks)
     {
-        this.renderBackground(graphics);
+        this.renderBackground(graphics, mouseX, mouseY, partialTicks);
 
         // GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
         int i = (this.width - this.xSize) / 2;
@@ -60,7 +61,7 @@ public class HorseInfoGUI extends Screen {
 
         super.render(graphics, mouseX, mouseY, partialTicks);
 
-        InventoryScreen.renderEntityInInventoryFollowsMouse(graphics,i + 43, j + 68, 25, (float) (i + 51) - mouseX, (float) (j + 75 - 50) - mouseY, this.horse);
+        InventoryScreen.renderEntityInInventoryFollowsMouse(graphics, i + 18, j + 8, i + 68, j + 78, 25, 0.0625F, mouseX, mouseY, this.horse);
 
         graphics.drawString(mc.font, this.horse.getName(), i + 84, j + 10, DyeColor.WHITE.getTextColor());
 

@@ -7,26 +7,30 @@ import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
-import net.fabricmc.fabric.api.networking.v1.PacketSender;
+import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
-import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.ChatFormatting;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.animal.horse.AbstractHorse;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -40,28 +44,45 @@ public class CallableHorseFabric implements ModInitializer {
     public static int rangeCanCall = 0;
     public static boolean canRespawnHorse = true;
     public static boolean canCallFromOtherWorld = true;
+    private static final double CALL_START_DISTANCE = 16.0D;
+    private static final double CALL_TARGET_DISTANCE = 2.5D;
+    private static final double CALL_RUN_STEP = 0.45D;
+    private static final double CALL_RUN_FALLBACK_SPEED = 1.6D;
+    private static final double CALL_RUN_REACHED_DISTANCE = 1.25D;
+    private static final int CALL_RUN_STUCK_LIMIT = 15;
+    private static final String CALL_RUN_ACTIVE = "callable_horse_straight_run";
+    private static final String CALL_RUN_FALLBACK = "callable_horse_pathfinding_run";
+    private static final String CALL_RUN_STUCK_TICKS = "callable_horse_run_stuck_ticks";
+    private static final String CALL_RUN_REPATH_TICKS = "callable_horse_run_repath_ticks";
+    private static final String CALL_RUN_TARGET_X = "callable_horse_run_target_x";
+    private static final String CALL_RUN_TARGET_Y = "callable_horse_run_target_y";
+    private static final String CALL_RUN_TARGET_Z = "callable_horse_run_target_z";
 
     // C2S
-    public static ResourceLocation CALL_HORSE_PACKAGE = new ResourceLocation(CallableHorseFabric.MODID, "call_horse_key");
-    public static ResourceLocation SET_HORSE_PACKAGE = new ResourceLocation(CallableHorseFabric.MODID, "set_horse_key");
-   //  public static ResourceLocation STATE_HORSE_PACKAGE = new ResourceLocation(CallableHorseFabric.MODID, "state_horse_key");
+    public static final ResourceLocation CALL_HORSE_PACKAGE = id("call_horse_key");
+    public static final ResourceLocation SET_HORSE_PACKAGE = id("set_horse_key");
+   //  public static final ResourceLocation STATE_HORSE_PACKAGE = id("state_horse_key");
 
     public WorldHorseData data;
 
-    public static final SoundEvent whistle = SoundEvent.createVariableRangeEvent(new ResourceLocation(MODID, "whistle"));
+    public static final SoundEvent whistle = SoundEvent.createVariableRangeEvent(id("whistle"));
 
     @Override
     public void onInitialize() {
-        var flag = FabricLoader.getInstance().isModLoaded("pineapple_coffee");
-        if (flag) new Config();
+        new Config();
 
-        ServerPlayNetworking.registerGlobalReceiver(CALL_HORSE_PACKAGE, CallableHorseFabric::onCallHorse);
-        ServerPlayNetworking.registerGlobalReceiver(SET_HORSE_PACKAGE, CallableHorseFabric::onSetHorse);
+        PayloadTypeRegistry.playC2S().register(CallHorsePayload.ID, CallHorsePayload.CODEC);
+        PayloadTypeRegistry.playC2S().register(SetHorsePayload.ID, SetHorsePayload.CODEC);
+
+        ServerPlayNetworking.registerGlobalReceiver(CallHorsePayload.ID, (payload, context) -> onCallHorse(context.server(), context.player()));
+        ServerPlayNetworking.registerGlobalReceiver(SetHorsePayload.ID, (payload, context) -> onSetHorse(context.player()));
         // ServerPlayNetworking.registerGlobalReceiver(STATE_HORSE_PACKAGE, CallableHorseFabric::checkHorseState);
 
         Registry.register(BuiltInRegistries.SOUND_EVENT, whistle.getLocation(), whistle);
 
         ServerLifecycleEvents.SERVER_STARTED.register(it -> this.data = WorldHorseData.getServerState(it));
+
+        ServerTickEvents.END_WORLD_TICK.register(CallableHorseFabric::tickCalledHorses);
 
         ServerTickEvents.END_WORLD_TICK.register(world -> {
             if (this.data == null) return;
@@ -97,7 +118,35 @@ public class CallableHorseFabric implements ModInitializer {
         });
     }
 
-    private static void onCallHorse(MinecraftServer server, ServerPlayer player, ServerGamePacketListenerImpl handler, FriendlyByteBuf buf, PacketSender responseSender) {
+    public static ResourceLocation id(String path) {
+        return ResourceLocation.fromNamespaceAndPath(MODID, path);
+    }
+
+    public record CallHorsePayload() implements CustomPacketPayload {
+        public static final CallHorsePayload INSTANCE = new CallHorsePayload();
+        public static final Type<CallHorsePayload> ID = new Type<>(CALL_HORSE_PACKAGE);
+        public static final StreamCodec<RegistryFriendlyByteBuf, CallHorsePayload> CODEC = StreamCodec.unit(INSTANCE);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return ID;
+        }
+    }
+
+    public record SetHorsePayload() implements CustomPacketPayload {
+        public static final SetHorsePayload INSTANCE = new SetHorsePayload();
+        public static final Type<SetHorsePayload> ID = new Type<>(SET_HORSE_PACKAGE);
+        public static final StreamCodec<RegistryFriendlyByteBuf, SetHorsePayload> CODEC = StreamCodec.unit(INSTANCE);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return ID;
+        }
+    }
+
+    private static void onCallHorse(MinecraftServer server, ServerPlayer player) {
+        playWhistle(player);
+
         var nbt = player.getCompoundTag();
 
         if (!nbt.contains("player_horse_UUID")) {
@@ -159,20 +208,177 @@ public class CallableHorseFabric implements ModInitializer {
     private static void callHorse(AbstractHorse horse, ServerPlayer player) {
         horse.ejectPassengers();
         ServerLevel level = (ServerLevel) player.level();
-        horse.teleportTo(level, player.getX(), player.getY(), player.getZ(), null, horse.getYRot(), horse.getXRot());
-
-        level.playSound(player, player.getOnPos(), whistle, SoundSource.MASTER);
-
-        /*
-        if (horse.position().distanceTo(player.position()) > 32)
-            horse.teleportTo((ServerLevel) player.level(), player.getX(), player.getY(), player.getZ(), null, horse.getYRot(), horse.getXRot());
-        else {
-            horse.getAttribute(Attributes.FOLLOW_RANGE).setBaseValue(48);
-            horse.getMoveControl().setWantedPosition(player.getX(), player.getY(), player.getZ(), 1.8f);
-            horse.getNavigation().moveTo(player.getX(), player.getY(), player.getZ(), 1.8f);
-        }
-        */
+        Vec3 start = findCallPosition(level, player, -CALL_START_DISTANCE);
+        Vec3 target = findCallPosition(level, player, CALL_TARGET_DISTANCE);
+        horse.teleportTo(level, start.x(), start.y(), start.z(), null, player.getYRot(), horse.getXRot());
+        startStraightRun(horse, target);
         player.displayClientMessage(Component.translatable("success_call_house.callablehorse.info").withStyle(ChatFormatting.GREEN), true);
+    }
+
+    private static void playWhistle(ServerPlayer player) {
+        player.level().playSound(null, player.getX(), player.getY(), player.getZ(), whistle, SoundSource.PLAYERS, 1.0F, 1.0F);
+    }
+
+    private static Vec3 findCallPosition(ServerLevel level, ServerPlayer player, double distance) {
+        Vec3 look = player.getLookAngle();
+        Vec3 horizontalLook = new Vec3(look.x(), 0.0D, look.z());
+        if (horizontalLook.lengthSqr() < 1.0E-4D) horizontalLook = Vec3.directionFromRotation(0.0F, player.getYRot());
+        horizontalLook = horizontalLook.normalize();
+
+        Vec3 target = player.position().add(horizontalLook.scale(distance));
+        BlockPos base = BlockPos.containing(target.x(), player.getY(), target.z());
+
+        int top = Math.min(level.getMaxBuildHeight() - 2, base.getY() + 8);
+        int bottom = Math.max(level.getMinBuildHeight() + 1, base.getY() - 8);
+        for (int y = top; y >= bottom; y--) {
+            BlockPos candidate = new BlockPos(base.getX(), y, base.getZ());
+            if (canHorseStandAt(level, candidate)) return Vec3.atBottomCenterOf(candidate);
+        }
+
+        return player.position().add(horizontalLook.scale(distance));
+    }
+
+    private static boolean canHorseStandAt(ServerLevel level, BlockPos pos) {
+        BlockPos below = pos.below();
+        BlockPos above = pos.above();
+        return level.getBlockState(below).isFaceSturdy(level, below, Direction.UP)
+                && level.getBlockState(pos).getCollisionShape(level, pos).isEmpty()
+                && level.getBlockState(above).getCollisionShape(level, above).isEmpty();
+    }
+
+    private static void spawnHorseBehindPlayer(AbstractHorse horse, ServerPlayer player) {
+        ServerLevel level = (ServerLevel) player.level();
+        Vec3 start = findCallPosition(level, player, -CALL_START_DISTANCE);
+        Vec3 target = findCallPosition(level, player, CALL_TARGET_DISTANCE);
+        horse.moveTo(start.x(), start.y(), start.z(), player.getYRot(), horse.getXRot());
+        level.addFreshEntity(horse);
+        startStraightRun(horse, target);
+    }
+
+    private static void startStraightRun(AbstractHorse horse, Vec3 target) {
+        var followRange = horse.getAttribute(Attributes.FOLLOW_RANGE);
+        if (followRange != null && followRange.getBaseValue() < 64.0D) followRange.setBaseValue(64.0D);
+
+        horse.getNavigation().stop();
+        horse.setNoAi(true);
+
+        CompoundTag tag = horse.getCompoundTag();
+        tag.putBoolean(CALL_RUN_ACTIVE, true);
+        tag.putBoolean(CALL_RUN_FALLBACK, false);
+        tag.putInt(CALL_RUN_STUCK_TICKS, 0);
+        tag.putInt(CALL_RUN_REPATH_TICKS, 0);
+        tag.putDouble(CALL_RUN_TARGET_X, target.x());
+        tag.putDouble(CALL_RUN_TARGET_Y, target.y());
+        tag.putDouble(CALL_RUN_TARGET_Z, target.z());
+    }
+
+    private static void tickCalledHorses(ServerLevel level) {
+        for (Entity entity : level.getAllEntities()) {
+            if (entity instanceof AbstractHorse horse) tickStraightRun(level, horse);
+        }
+    }
+
+    private static void tickStraightRun(ServerLevel level, AbstractHorse horse) {
+        CompoundTag tag = horse.getCompoundTag();
+        if (!tag.getBoolean(CALL_RUN_ACTIVE)) return;
+
+        Vec3 target = new Vec3(tag.getDouble(CALL_RUN_TARGET_X), tag.getDouble(CALL_RUN_TARGET_Y), tag.getDouble(CALL_RUN_TARGET_Z));
+        Vec3 current = horse.position();
+        double dx = target.x() - current.x();
+        double dz = target.z() - current.z();
+        double horizontalDistance = Math.sqrt(dx * dx + dz * dz);
+
+        if (tag.getBoolean(CALL_RUN_FALLBACK)) {
+            tickPathfindingRun(horse, target, horizontalDistance);
+            return;
+        }
+
+        if (horizontalDistance <= CALL_RUN_REACHED_DISTANCE) {
+            Vec3 stop = findGroundedRunPosition(level, target.x(), target.y(), target.z());
+            if (stop != null) horse.moveTo(stop.x(), stop.y(), stop.z(), horse.getYRot(), horse.getXRot());
+            stopStraightRun(horse);
+            return;
+        }
+
+        double stepX = dx / horizontalDistance * CALL_RUN_STEP;
+        double stepZ = dz / horizontalDistance * CALL_RUN_STEP;
+        Vec3 next = findGroundedRunPosition(level, current.x() + stepX, current.y(), current.z() + stepZ);
+        if (next == null || !canHorseMoveTo(level, horse, next)) {
+            markStraightRunBlocked(horse, target);
+            return;
+        }
+
+        float yaw = (float) (Math.atan2(-stepX, stepZ) * 180.0D / Math.PI);
+        horse.moveTo(next.x(), next.y(), next.z(), yaw, horse.getXRot());
+        horse.setYHeadRot(yaw);
+        horse.setYBodyRot(yaw);
+        tag.putInt(CALL_RUN_STUCK_TICKS, 0);
+    }
+
+    private static Vec3 findGroundedRunPosition(ServerLevel level, double x, double nearY, double z) {
+        BlockPos base = BlockPos.containing(x, nearY, z);
+        int top = Math.min(level.getMaxBuildHeight() - 2, base.getY() + 3);
+        int bottom = Math.max(level.getMinBuildHeight() + 1, base.getY() - 4);
+
+        for (int y = top; y >= bottom; y--) {
+            BlockPos candidate = new BlockPos(base.getX(), y, base.getZ());
+            if (canHorseStandAt(level, candidate)) return new Vec3(x, y, z);
+        }
+
+        return null;
+    }
+
+    private static boolean canHorseMoveTo(ServerLevel level, AbstractHorse horse, Vec3 next) {
+        Vec3 movement = next.subtract(horse.position());
+        return level.noCollision(horse, horse.getBoundingBox().move(movement));
+    }
+
+    private static void markStraightRunBlocked(AbstractHorse horse, Vec3 target) {
+        CompoundTag tag = horse.getCompoundTag();
+        int stuckTicks = tag.getInt(CALL_RUN_STUCK_TICKS) + 1;
+        tag.putInt(CALL_RUN_STUCK_TICKS, stuckTicks);
+
+        if (stuckTicks >= CALL_RUN_STUCK_LIMIT) startPathfindingRun(horse, target);
+    }
+
+    private static void startPathfindingRun(AbstractHorse horse, Vec3 target) {
+        CompoundTag tag = horse.getCompoundTag();
+        tag.putBoolean(CALL_RUN_FALLBACK, true);
+        tag.putInt(CALL_RUN_REPATH_TICKS, 0);
+
+        horse.setNoAi(false);
+        horse.getNavigation().stop();
+        horse.getNavigation().moveTo(target.x(), target.y(), target.z(), CALL_RUN_FALLBACK_SPEED);
+    }
+
+    private static void tickPathfindingRun(AbstractHorse horse, Vec3 target, double horizontalDistance) {
+        if (horizontalDistance <= CALL_RUN_REACHED_DISTANCE) {
+            stopStraightRun(horse);
+            return;
+        }
+
+        CompoundTag tag = horse.getCompoundTag();
+        int repathTicks = tag.getInt(CALL_RUN_REPATH_TICKS);
+        if (repathTicks <= 0 || horse.getNavigation().isDone()) {
+            horse.getNavigation().moveTo(target.x(), target.y(), target.z(), CALL_RUN_FALLBACK_SPEED);
+            tag.putInt(CALL_RUN_REPATH_TICKS, 20);
+        } else {
+            tag.putInt(CALL_RUN_REPATH_TICKS, repathTicks - 1);
+        }
+    }
+
+    private static void stopStraightRun(AbstractHorse horse) {
+        CompoundTag tag = horse.getCompoundTag();
+        tag.remove(CALL_RUN_ACTIVE);
+        tag.remove(CALL_RUN_FALLBACK);
+        tag.remove(CALL_RUN_STUCK_TICKS);
+        tag.remove(CALL_RUN_REPATH_TICKS);
+        tag.remove(CALL_RUN_TARGET_X);
+        tag.remove(CALL_RUN_TARGET_Y);
+        tag.remove(CALL_RUN_TARGET_Z);
+        horse.setNoAi(false);
+        horse.getNavigation().stop();
+        horse.setDeltaMovement(Vec3.ZERO);
     }
 
     private static boolean respawnAndCallHorse(ServerPlayer player) {
@@ -182,8 +388,7 @@ public class CallableHorseFabric implements ModInitializer {
         horse.load(nbt);
         ((AbstractHorseAccess) horse).getInventory().clearContent();
         horse.getCompoundTag().putString("player_horse_UUID", player.getCompoundTag().getString("player_horse_UUID"));
-        horse.setPos(player.position());
-        player.level().addFreshEntity(horse);
+        spawnHorseBehindPlayer(horse, player);
         return true;
     }
 
@@ -192,8 +397,7 @@ public class CallableHorseFabric implements ModInitializer {
         var deadHorse = EntityType.by(nbt).get().create(player.level());
         if (!(deadHorse instanceof AbstractHorse horse)) return false;
         horse.load(nbt);
-        horse.setPos(player.position());
-        player.level().addFreshEntity(horse);
+        spawnHorseBehindPlayer(horse, player);
 
         String uuid = UUID.randomUUID().toString();
         horse.getCompoundTag().putString("player_horse_UUID", uuid);
@@ -204,12 +408,10 @@ public class CallableHorseFabric implements ModInitializer {
         player.getCompoundTag().put("player_horse_nbt", horseTag);
         player.getCompoundTag().putString("player_horse_type", horse.getType().toString());
 
-        player.level().playSound(player, player.getOnPos(), whistle, SoundSource.MASTER);
-
         return true;
     }
 
-    private static void onSetHorse(MinecraftServer server, ServerPlayer player, ServerGamePacketListenerImpl handler, FriendlyByteBuf buf, PacketSender responseSender) {
+    private static void onSetHorse(ServerPlayer player) {
         var entity = player.getVehicle();
         if (!(entity instanceof AbstractHorse horse)) {
             player.displayClientMessage(Component.translatable("no_horse_can_set.callablehorse.info").withStyle(ChatFormatting.RED), true);

@@ -1,0 +1,10 @@
+{
+  "whistle": {
+    "sounds": [
+      {
+        "name": "callablehorsefabric:whistle_airy_touchup",
+        "stream": false
+      }
+    ]
+  }
+}

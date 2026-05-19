@@ -6,10 +6,8 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
-import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.sounds.SoundSource;
 import org.lwjgl.glfw.GLFW;
 
 public class CallableHorseFabricClient implements ClientModInitializer {
@@ -22,18 +20,16 @@ public class CallableHorseFabricClient implements ClientModInitializer {
     }
 
     // S2C
-    public static ResourceLocation OPEN_GUI = new ResourceLocation(CallableHorseFabric.MODID, "open_horse_gui");
+    public static ResourceLocation OPEN_GUI = CallableHorseFabric.id("open_horse_gui");
 
     @Override
     public void onInitializeClient() {
         // ClientPlayNetworking.registerGlobalReceiver(OPEN_GUI, CallableHorseFabricClient::openHorseGUI);
         ClientTickEvents.END_CLIENT_TICK.register(it -> {
-           if (CALL_HORSE.isDown()) {
-               ClientPlayNetworking.send(CallableHorseFabric.CALL_HORSE_PACKAGE, PacketByteBufs.empty());
-               // it.level.playSound(it.player, it.player.getOnPos(), CallableHorseFabric.whistle, SoundSource.MASTER);
-               it.level.playLocalSound(it.player.getOnPos(), CallableHorseFabric.whistle, SoundSource.MASTER, 32.0f, 16.0f, false);
+           while (CALL_HORSE.consumeClick()) {
+               ClientPlayNetworking.send(CallableHorseFabric.CallHorsePayload.INSTANCE);
            }
-           if (SET_HORSE.isDown()) ClientPlayNetworking.send(CallableHorseFabric.SET_HORSE_PACKAGE, PacketByteBufs.empty());
+           while (SET_HORSE.consumeClick()) ClientPlayNetworking.send(CallableHorseFabric.SetHorsePayload.INSTANCE);
            // if (CHECK_HORSE.isDown())    ClientPlayNetworking.send(CallableHorseFabric.STATE_HORSE_PACKAGE, PacketByteBufs.empty());
         });
     }

@@ -1,5 +1,5 @@
 plugins {
-	id 'fabric-loom' version '1.5-SNAPSHOT'
+	id 'fabric-loom' version '1.7-SNAPSHOT'
 	id 'maven-publish'
 }
 
@@ -24,18 +24,14 @@ repositories {
 dependencies {
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
 	mappings loom.layered {
-		it.parchment("org.parchmentmc.data:parchment-1.20.1:2023.09.03@zip")
-		it.officialMojangMappings { nameSyntheticMembers = false }
+		officialMojangMappings { nameSyntheticMembers = false }
+		parchment("org.parchmentmc.data:parchment-1.21.1:2024.11.17@zip")
 	}
 
 	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
-	modImplementation(include("io.github.fabricators_of_create.Porting-Lib:core:2.3.0+1.20.1"))
-
-	modImplementation "club.someoneice.pc:pineapple-coffee:0.1.1"
-
-	modLocalRuntime("com.terraformersmc:modmenu:7.0.0") { exclude group: "net.fabricmc"; exclude group: "net.fabricmc.fabric-api" }
+	modLocalRuntime("com.terraformersmc:modmenu:11.0.3") { exclude group: "net.fabricmc"; exclude group: "net.fabricmc.fabric-api" }
 	modLocalRuntime "net.fabricmc:fabric-language-kotlin:${project.fabric_kotlin_version}"
 }
 
@@ -48,14 +44,14 @@ processResources {
 }
 
 tasks.withType(JavaCompile).configureEach {
-	it.options.release = 17
+	it.options.release = 21
 }
 
 java {
 	withSourcesJar()
 
-	sourceCompatibility = JavaVersion.VERSION_17
-	targetCompatibility = JavaVersion.VERSION_17
+	sourceCompatibility = JavaVersion.VERSION_21
+	targetCompatibility = JavaVersion.VERSION_21
 }
 
 jar {
@@ -65,7 +61,7 @@ jar {
 }
 
 tasks.withType(JavaCompile).configureEach {
-	it.options.release = 17
+	it.options.release = 21
 }
 
 publishing {

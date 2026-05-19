@@ -1,6 +1,7 @@
 package club.someoneice.callablehorse.core;
 
 import com.google.common.collect.Lists;
+import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.StringTag;
@@ -11,16 +12,16 @@ import net.minecraft.world.level.storage.DimensionDataStorage;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.List;
-import java.util.function.Function;
 
 public class WorldHorseData extends SavedData {
     public static final String KEY = "callable_horse_common_data";
+    private static final Factory<WorldHorseData> TYPE = new Factory<>(WorldHorseData::new, WorldHorseData::createFromNbt, null);
 
     public List<String> horseShouldKill = Lists.newArrayList();
     public List<String> horseShouldRespawn = Lists.newArrayList();
 
     @Override @NotNull
-    public CompoundTag save(CompoundTag compoundTag) {
+    public CompoundTag save(CompoundTag compoundTag, HolderLookup.Provider provider) {
         ListTag tagListShouldKill = new ListTag();
         ListTag tagListShouldRespawn = new ListTag();
 
@@ -33,7 +34,7 @@ public class WorldHorseData extends SavedData {
         return compoundTag;
     }
 
-    public static WorldHorseData createFromNbt(CompoundTag tag) {
+    public static WorldHorseData createFromNbt(CompoundTag tag, HolderLookup.Provider provider) {
         WorldHorseData state = new WorldHorseData();
         var tagListShouldKill =    (ListTag) tag.getList("horseShouldKill", 8);
         var tagListShouldRespawn = (ListTag) tag.getList("horseShouldRespawn", 8);
@@ -44,15 +45,10 @@ public class WorldHorseData extends SavedData {
         return state;
     }
 
-    private static final Function<CompoundTag, WorldHorseData> type = compoundTag -> {
-        if (compoundTag.contains("callable_horse_world_data")) return WorldHorseData.createFromNbt(compoundTag);
-        else return new WorldHorseData();
-    };
-
     public static WorldHorseData getServerState(MinecraftServer server) {
         DimensionDataStorage persistentStateManager = server.getLevel(Level.OVERWORLD).getDataStorage();
 
-        WorldHorseData state = persistentStateManager.computeIfAbsent(type, WorldHorseData::new, CallableHorseFabric.MODID);
+        WorldHorseData state = persistentStateManager.computeIfAbsent(TYPE, CallableHorseFabric.MODID);
 
         state.setDirty();
         return state;

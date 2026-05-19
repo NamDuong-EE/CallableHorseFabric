@@ -1,7 +1,7 @@
 {
   "required": true,
   "package": "club.someoneice.callablehorse.mixin",
-  "compatibilityLevel": "JAVA_17",
+  "compatibilityLevel": "JAVA_21",
   "mixins": [
     "AbstractHorseAccess",
     "AbstractHorseMixin",
